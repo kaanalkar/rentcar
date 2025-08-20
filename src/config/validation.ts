@@ -31,4 +31,10 @@ export const validationSchema = Joi.object({
   SEED_ADMIN_PASSWORD: Joi.string().min(6).optional(),
   SEED_ADMIN_NAME: Joi.string().optional(),
   SEED_ADMIN_LICENSE: Joi.string().optional(),
+
+  MAIL_HOST: Joi.string().required(),
+  MAIL_PORT: Joi.number().required(),
+  MAIL_USER: Joi.string().required(),
+  MAIL_PASS: Joi.string().required(),
+  MAIL_FROM: Joi.string().email().required(),
 });

@@ -17,8 +17,12 @@ import {
   Delete,
   UseGuards,
   NotFoundException,
+  StreamableFile,
+  Res
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+
+import { ConflictException, InternalServerErrorException } from '@nestjs/common/exceptions';
 
 import {
   CreateRentalDto,
@@ -46,10 +50,12 @@ import type {
 } from '../../application/ports/out/car-rental-out.ports';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
+import { ExportService } from '../../application/services/export.service';
 import { AuthService } from '../../auth/auth.service';
 import { User } from '../../domain/entities/user.entity';
 import { UserRole } from '../../domain/enums/user-role.enum';
 import * as bcrypt from 'bcrypt';
+import { Response } from 'express';
 
 /* ------------------------------------------------------------------ */
 /* RENTAL                                                             */
@@ -63,6 +69,7 @@ export class RentalController {
     @Inject('ReturnRentalPort') private readonly returnRental: ReturnRentalPort,
     @Inject('CancelRentalPort') private readonly cancelRental: CancelRentalPort,
     @Inject('FileStoragePort') private readonly fileStorage?: FileStoragePort,
+    private readonly exportService?: ExportService,
   ) {}
 
   @Get('available-cars')
@@ -72,19 +79,41 @@ export class RentalController {
     return this.listCars.execute(q.toFilter());
   }
 
-  @Post()
+    @Post()
   @ApiOperation({ summary: 'Create rental' })
   @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  create(@Body() dto: CreateRentalDto) {
-    return this.createRental.execute(dto);
+  async create(@Body() dto: CreateRentalDto) {
+    try {
+      return await this.createRental.execute(dto);
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (/User not allowed to rent/i.test(msg)) {
+        throw new BadRequestException('User not allowed to rent');
+      }
+      if (/Car not available/i.test(msg)) {
+        throw new BadRequestException('Car not available');
+      }
+      if (/Car already rented/i.test(msg)) {
+        throw new ConflictException('Car already rented');
+      }
+      if (/User already has an active rental/i.test(msg)) {
+        throw new ConflictException('User already has an active rental');
+      }
+      if (/User not found/i.test(msg)) {
+        throw new NotFoundException('User not found');
+      }
+      if (/Invalid rental/i.test(msg)) {
+        throw new BadRequestException('Invalid rental');
+      }
+
+      throw new InternalServerErrorException();
+    }
   }
 
   @Patch('return')
   @ApiOperation({ summary: 'Return rental' })
   @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   return(@Body() dto: ReturnRentalDto) {
     return this.returnRental.execute(dto);
@@ -93,7 +122,6 @@ export class RentalController {
   @Patch('cancel')
   @ApiOperation({ summary: 'Cancel rental (RESERVED only)' })
   @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   cancel(@Body() dto: CancelRentalDto) {
     return this.cancelRental.execute(dto);
@@ -102,13 +130,32 @@ export class RentalController {
   @Post('car-image/presign')
   @ApiOperation({ summary: 'Get S3 presigned PUT URL for car image (optional)' })
   @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async presign(@Body() dto: PresignUploadDto) {
     if (!this.fileStorage) return { message: 'File storage is not configured' };
     const url = await this.fileStorage.getPresignedPutUrl(dto.key, 900);
     return { url, expiresIn: 900, key: dto.key };
   }
+
+  /* ------------------------------------------------------------------ */
+/* EXPORT                                                             */
+/* ------------------------------------------------------------------ */
+
+  @Get(':id/export')
+  @ApiOperation({ summary: 'Export rental as PDF or Excel' })
+  @ApiBearerAuth()
+    async exportRental(
+      @Param('id', new ParseUUIDPipe()) id: string,
+      @Query('format') format: 'pdf' | 'xlsx' = 'pdf',
+      @Res({ passthrough: true }) res: Response,
+    ): Promise<StreamableFile> {
+    const { filename, mime, buffer } = await this.exportService!.exportRental(id, format);
+    res.set({
+      'Content-Type': mime,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    return new StreamableFile(buffer);
+}
 }
 
 /* ------------------------------------------------------------------ */
@@ -200,6 +247,7 @@ export class CarsController {
     @Inject('ListAvailableCarsPort') private readonly listCars: ListAvailableCarsPort,
     @Inject('CreateCarPort') private readonly createCar: CreateCarPort,
     @Inject('DeleteCarPort') private readonly deleteCar: DeleteCarPort,
+    @Inject('FileStoragePort') private readonly fileStorage?: FileStoragePort,
   ) {}
 
   @Get('available')
@@ -231,3 +279,4 @@ export class CarsController {
     return { ok: true };
   }
 }
+

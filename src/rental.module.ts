@@ -1,22 +1,34 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
 import { AuthModule } from './auth/auth.module';
 
-import { TypeOrmCar } from './infrastructure/adapters/repositories/car.repository';
-import { TypeOrmRental } from './infrastructure/adapters/repositories/rental.repository';
-import { TypeOrmUser } from './infrastructure/adapters/repositories/user.repository';
-
 import {
+  RentalController,
+  AuthController,
+  UsersController,
+  CarsController,
+} from './infrastructure/controllers/rental.controller';
+
+import { TypeOrmCar, CarTypeOrmRepository } from './infrastructure/adapters/repositories/car.repository';
+import { TypeOrmRental, RentalTypeOrmRepository } from './infrastructure/adapters/repositories/rental.repository';
+import { TypeOrmUser, UserTypeOrmRepository } from './infrastructure/adapters/repositories/user.repository';
+
+import type {
   CarRepositoryPort,
   RentalRepositoryPort,
   UserRepositoryPort,
   FileStoragePort,
 } from './application/ports/out/car-rental-out.ports';
-import {
+
+import type {
   CreateRentalPort,
   ListAvailableCarsPort,
   ReturnRentalPort,
   CancelRentalPort,
+  CreateCarPort,
+  DeleteCarPort,
 } from './application/ports/in/car-rental-in.ports';
 
 import { CreateRentalUseCase } from './application/use-cases/create-rental.use-case';
@@ -26,18 +38,11 @@ import { CancelRentalUseCase } from './application/use-cases/cancel-rental.use-c
 import { CreateCarUseCase } from './application/use-cases/create-car.use-case';
 import { DeleteCarUseCase } from './application/use-cases/delete-car.use-case';
 
-import { CarTypeOrmRepository } from './infrastructure/adapters/repositories/car.repository';
-import { RentalTypeOrmRepository } from './infrastructure/adapters/repositories/rental.repository';
-import { UserTypeOrmRepository } from './infrastructure/adapters/repositories/user.repository';
-import { S3FileStorageAdapter } from './infrastructure/adapters/s3-file-storage.adapter';
 import { GenerateReservationCodeService } from './application/services/generate-reservation-code.service';
-
-import {
-  RentalController,
-  AuthController,
-  UsersController,
-  CarsController,
-} from './infrastructure/controllers/rental.controller';
+import { S3FileStorageAdapter } from './infrastructure/adapters/s3-file-storage.adapter';
+import { MailService } from './application/services/mail.service';
+import { RentalEventsListener } from './infrastructure/listeners/rental.listener';
+import { ExportService } from 'application/services/export.service';
 
 @Module({
   imports: [
@@ -51,7 +56,10 @@ import {
     { provide: 'UserRepositoryPort', useClass: UserTypeOrmRepository },
     { provide: 'FileStoragePort', useClass: S3FileStorageAdapter },
 
+    ExportService,
     GenerateReservationCodeService,
+    MailService,
+    RentalEventsListener,
 
     {
       provide: 'CreateRentalPort',
@@ -60,8 +68,9 @@ import {
         rentals: RentalRepositoryPort,
         users: UserRepositoryPort,
         codeGen: GenerateReservationCodeService,
-      ) => new CreateRentalUseCase(cars, rentals, users, codeGen),
-      inject: ['CarRepositoryPort', 'RentalRepositoryPort', 'UserRepositoryPort', GenerateReservationCodeService],
+        events: EventEmitter2,
+      ) => new CreateRentalUseCase(cars, rentals, users, codeGen, events),
+      inject: ['CarRepositoryPort', 'RentalRepositoryPort', 'UserRepositoryPort', GenerateReservationCodeService, EventEmitter2],
     },
     {
       provide: 'ListAvailableCarsPort',
